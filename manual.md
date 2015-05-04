@@ -4,7 +4,7 @@ Warning: this is a working draft.
 
 ## Overview
 
-This document desribes the LUIF (LUa InterFace),
+This document describes the LUIF (LUa InterFace),
 the interface language of
 the [Kollos project](https://github.com/jeffreykegler/kollos/).
 
@@ -17,7 +17,7 @@ to follow the Lua manual bottom-up pattern of introducing individual constructs 
 
 There is only one BNF statement, combining precedence, sequences, and alternation.
 
-LUIF extends the Lua syntax by adding `bnf` alternative to `stat` rule of the [Lua grammar](http://www.lua.org/manual/5.1/manual.html#8) and introducing the new rules. The general syntax for a BNF statement is as follows (`stat`, `block`, `var`, `field`, `Name`, and `String` symbols are as defined by the Lua grammar):
+LUIF extends the Lua syntax by adding `bnf` alternative to `stat` rule of the [Lua grammar](http://www.lua.org/manual/5.1/manual.html#8) and introducing the new rules. The general syntax for a BNF statement is as follows (`stat`, `block`, `funcname`, `funcbody`, `var`, `Name`, and `String` symbols are as defined by the Lua grammar):
 
 Note: this describes LUIF structural and lexical grammars 'used in the default way' as defined in [Grammars](#grammars) section below. The first rule will act as the start rule.
 
@@ -26,7 +26,7 @@ Note: this describes LUIF structural and lexical grammars 'used in the default w
 ```
 stat ::= bnf
 
-bnf ::= lhs produce_op rhs  -- to make references LHS/RHS easier to understand
+bnf ::= lhs produce_op rhs  -- to make references to LHS/RHS easier to understand
 
 lhs ::= symbol_name
 
@@ -39,13 +39,27 @@ precedenced_alternative ::= alternative { '|' alternative }
 
 alternative ::= rhslist { ',' adverb }
 
-adverb ::= field |
-           action
+adverb ::= action |
+           completed |
+           predicted |
+           assoc
 
-action ::= 'action' '=' actionexp
+-- values other than function(...) -- https://github.com/rns/kollos-luif-doc/issues/12
+-- context in action functions -- https://github.com/rns/kollos-luif-doc/issues/11
+action ::= 'action' '=' functionexp
 
-actionexp ::= 'function' '(...)' block end
-              -- borrow array descriptors from SLIF?
+completed ::= 'completed' '=' functionexp
+
+predicted ::= 'predicted' '=' functionexp
+
+functionexp ::= 'function' funcname funcbody |
+                funcname
+
+assoc ::= 'assoc' '=' assocexp
+
+assocexp ::= 'left' |
+             'right' |
+             'group'
 
 rhslist ::= { rh_atom }       -- can be empty, like Lua chunk
 
@@ -61,6 +75,7 @@ separated_sequence ::= sequence  |
                        sequence '%'  separator | -- proper separation
                        sequence '%%' separator
 
+-- more complex separators -- http://irclog.perlgeek.de/marpa/2015-05-03#i_10538440
 separator ::= symbol_name
 
 sequence ::= symbol_name '+' |
@@ -71,9 +86,11 @@ sequence ::= symbol_name '+' |
 
 symbol_name :: Name
 
-literal ::= String
+literal ::= String    -- long strings not allowed
 
-charclass ::= String -- must contain a Lua pattern as per http://www.lua.org/manual/5.1/manual.html#5.4.1
+-- a Lua pattern as per http://www.lua.org/manual/5.1/manual.html#5.4.1
+-- or a regex character class
+charclass ::= String
 
 ```
 
@@ -82,14 +99,11 @@ use lua patterns as they are or
 translate them to regexes for speed
 or make this an option ]
 
-[todo: implementation suggestion: Lua patterns include
-[`%bxy`](http://www.lua.org/pil/20.2.html),
-which matches balanced delimiters, LUIF can extend it
-to match nested balanced delimiters
-which seems to be a fairly common use case.
-]
+[todo: nested delimiters as sequence separators,
+like [`%bxy`](http://www.lua.org/pil/20.2.html), but with nesting support
+per comment to https://github.com/rns/kollos-luif-doc/issues/17]
 
-## Sequences
+### Sequences
 
 Sequences are expressions on the RHS of a BNF rule alternative
 which imply the repetition of a symbol,
@@ -107,7 +121,7 @@ as described above.
 A repetiton consists of
 
 + A repetend, followed by
-+ An optional puncuation specifier.
++ An optional punctuation specifier.
 
 A repetition specifier is one of
 
@@ -121,11 +135,24 @@ A repetition specifier is one of
 
 A punctuation specifier is one of
 ```
-    % <sep>     -- use <sep> as a separator
-    %% <sep>     -- use <sep> as a terminator
+    % <sep>     -- use <sep> as a proper separator
+    %% <sep>     -- use <sep> as liberal separator
+    %- <sep>    -- proper separation, same as %
+    %$ <sep>    -- use <sep> as a terminator
 ```
-When a terminator specifier is in use,
-the final terminator is optional.
+When proper separation is in use,
+the separators must actually separate items.
+A separator after the last item is not allowed.
+
+When the separator is used as a terminator,
+it must come after every item.
+In particular, there *must* be a separator
+after the last item.
+
+A "liberal" separator may be used either
+as a proper separator or a terminator.
+That is, the separator after the last item
+is optional.
 
 Here are some examples:
 
@@ -138,14 +165,14 @@ Here are some examples:
     (<A> <B>) ** 3..42 -- between 3 and 42 repetitions of <A> and <B>
     [<A> <B>] ** 3..42 -- between 3 and 42 repetitions of <A> and <B>,
                        --   hidden from the semantics
-    <a>* % ','         -- 0 or more comma-separated <a> symbols
-    <a>+ % ','         -- 1 or more comma-separated <a> symbols
+    <a>* % ','         -- 0 or more properly comma-separated <a> symbols
+    <a>+ % ','         -- 1 or more properly comma-separated <a> symbols
     <a>? % ','         -- 0 or 1 <a> symbols; note that ',' is never used
-    <a> ** 2..* % ','  -- 2 or more comma-separated <a> symbols
-    <A>+ % ','         -- one or more comma-separated <A> symbols
-    <A>* % ','         -- zero or more comma-separated <A> symbols
-    (A B)* % ','       -- A and B, repeated zero or more times, and comma-separated
-    <A>+ %% ','        -- one or more comma-terminated <A> symbols
+    <a> ** 2..* % ','  -- 2 or more properly comma-separated <a> symbols
+    <A>+ % ','         -- one or more properly comma-separated <A> symbols
+    <A>* % ','         -- zero or more properly comma-separated <A> symbols
+    (A B)* % ','       -- A and B, repeated zero or more times, and properly comma-separated
+    <A>+ %% ','        -- one or more comma-separated or comma-terminated <A> symbols
 
 ```
 
@@ -193,15 +220,221 @@ in names.
 
 ### Literals
 
+LUIF literals are Lua literal strings as defined in [Lexical Conventions](http://www.lua.org/manual/5.1/manual.html#2.1) section of the Lua 5.1 Reference Manual.
+
 ### Character classes
+
+[todo: string containing a Lua pattern? ]
+
+[todo: string containing a PCRE regex? rename to Regexes then]
 
 ### Comments
 
-See Lua comments at the end of [Lexical Conventions](http://www.lua.org/manual/5.1/manual.html#2.1) in the Lua 5.1 Reference Manual.
+LUIF comments are Lua comments as defined at the end of [Lexical Conventions](http://www.lua.org/manual/5.1/manual.html#2.1) section in the Lua 5.1 Reference Manual.
 
 ### Adverbs
 
-#### action
+#### `action` <a id="action"></a>
+
+The `action` adverb defines the semantics of its RHS alternative.
+Its values are specified in [Semantics](#semantic_action) section below.
+
+#### `completed` <a id="completed"></a>
+
+The `completed` adverb defines
+the Lua function to be called when the RHS alternative is completed during the parse.
+Its values are the same as those of the `action` adverb.
+
+For more details on parse events, see [Events](#events) section.
+
+#### `predicted` <a id="predicted"></a>
+
+The `predicted` adverb defines
+the Lua function to be called when the RHS alternative is predicted during the parse.
+Its values are the same as those of the `action` adverb.
+
+For more details on parse events, see [Events](#events) section.
+
+#### `assoc`
+
+The `assoc` adverb defines associativity of a precedenced rule.
+Its value can be `left`, `right`, or `group`.
+The function of this adverb is as defined in the [SLIF](https://metacpan.org/pod/distribution/Marpa-R2/pod/Scanless/DSL.pod#assoc).
+
+## Semantics <a id="semantic_action"></a>
+
+The semantics of a BNF statement in the LUIF can be defined using either [`action` adverb](#semantic_action) of its RHS alternative or the [Abstract-Syntax Forest (ASF)](#semantics_with_ast_asf) functions of the LUIF.
+
+### Defining Semantics with `action` <a id="semantic_action"></a> adverb
+
+The value of the `action` adverb can be a Lua function as defined in [Function Definitions](http://www.lua.org/manual/5.1/manual.html#2.5.9) section of the Lua 5.1 Reference Manual or the name of such function.
+
+An action function can be
+a [bare function](#bare_function),
+a [namespaced function](#namespaced_function), or
+a [method](#method_function).
+This allows defining semantics in a set of functions, a namespace (Lua package) or an object.
+The action functions will be called in the context where their respective BNF statements are defined. Their return values will become the values of the LHS symbols corresponding to the RHS alternatives modified by the `action` adverb.
+
+The match context information, such as
+matched rule data, input string locations and literals
+will be provided by [context accessors](#context_accessors) in `luif.context` namespace.
+
+If the semantics of a BNF statement is defined in a separate Lua file, LUIF functionality must be imported with Lua's [`require`] (http://www.lua.org/manual/5.1/manual.html#pdf-require) function.
+
+#### Bare Function Actions <a id="bare_function"></a>
+
+The syntax for a bare function action is
+
+```lua
+action = function f (params) body end
+```
+
+It will be called as `f (params)`
+with `params` set to
+the values defined by the semantics of the matched RHS alternative's symbols.
+
+#### Namespaced Function Actions <a id="namespaced_function"></a>
+
+The syntax for a namespaced function action is
+
+```lua
+action = function t.a.b.c.f (params) body end
+```
+
+It will be called as `t.a.b.c.f (params)`
+with `params` set to
+the values defined by the semantics of the matched RHS alternative's symbols.
+
+More details on packages in Lua can be found in [Packages](http://www.lua.org/pil/15.html) section of _Programming in Lua_ book.
+
+#### Method Actions <a id="method_function"></a>
+
+The syntax for a method action is
+
+```lua
+action = function t.a.b.c:f (params) body end
+```
+
+or
+
+```lua
+action = function t.a.b.c.f (self, params) body end
+```
+
+It will be called as `t.a.b.c:f (params)`
+with `params` set to
+the values defined by the semantics of the matched RHS alternative's symbols.
+
+More details on objects and methods in Lua can be found in [Object-Oriented Programming](http://www.lua.org/pil/16.html) section of _Programming in Lua_ book.
+
+#### Context Accessors <a id="context_accessors"></a>
+
+Context accessors live in the `luif.context` name space.
+They can be called from semantic actions to get matched rule and locations data.
+To import them into a separate file, use Lua's [`require`](http://www.lua.org/manual/5.1/manual.html#pdf-require) function, i.e.
+
+```lua
+require 'luif.context'
+```
+
+The context accessors are:
+
+##### `lhs_id = luif.context.lhs()`
+
+returns the integer ID of the symbol which is on the LHS of the BNF rule matched in the parse value or completed/predicted during the parse.
+
+##### `rule_id = luif.context.rule()`
+
+returns the integer ID of the BNF rule matched in the parse value or completed/predicted during the parse.
+
+##### `alt_no = luif.context.alternative()`
+
+returns the number of the the BNF rule's RHS alternative matched in the parse value or completed/predicted during the parse.
+
+##### `prec = luif.context.precedence()`
+
+returns numeric precedence of the matched/completed/predicted alternative
+relative to other alternatives or nil if no precedence is defined for the alternative.
+
+##### `pos, len = luif.context.span()`
+
+returns position and length of the input section corresponding to
+the BNF rule matched in the parse value or
+completed/predicted during the parse.
+
+##### `string = luif.context.literal()`
+
+returns the section of the input corresponding to
+the BNF rule matched in the parse value or
+completed/predicted during the parse.
+It is defined by
+the input span returned by the `luif.context.span()` function above.
+
+##### `pos = luif.context.pos()`
+
+returns the position in the input, which starts the span corresponding to
+the BNF rule matched in the parse value or
+completed/predicted during the parse.
+
+##### `len = luif.context.length()`
+
+returns the length of the input span corresponding to
+the BNF rule matched in the parse value or
+completed/predicted during the parse.
+
+### Defining Semantics with AST/ASF <a id="semantics_with_ast_asf"></a>
+
+Marpa is designed to support ambiguity out-of-the-box,
+hence the LUIF semantics aims for the general case, where you have several parse values (ambiguous parse) and treats single parse values (unambiguous parse) as its specialization.
+The former case is handled with the [Abstract Syntax Forest (ASF) interface](#asf_traversal), while for the latter the application can simply [walk the AST](#ast_walking).
+
+The application can use `luif.value.ambiguous()` function to determine whether the parse is ambiguous. [todo: specify `luif.value.ambiguous()`]
+
+#### Ambiguous Parse -- Traversing the ASF  <a id="asf_traversal"></a>
+
+If the parse is ambiguous,
+LUIF walks the ASF calling the traverser function for its nodes.
+The traverser can call functions in `luif.asf` interface to enumerate and/or prune parse alternatives. This is done with `luif.asf.traverse(traverser)` function.
+
+[todo: more details/examples on ASF traversal]
+
+##### Enumerating Parse Alternatives
+
+##### Pruning the ASF
+
+#### Unambiguous Parse -- Walking the AST <a id="ast_walking"></a>
+
+If the parse is unambiguous, the ASF becomes the AST that makes the application's job much simpler. LUIF will build the AST and will call the visitor function for its nodes in the given order. The application can use [context accessors](#context_accessors) to get the node data, distill the AST, and produce the parse value. This is done by calling `luif.ast.walk(order, visitor)` function.
+
+[todo: more details/examples on AST walking]
+
+### Actions and ASF's: How to Choose
+
+[todo: more meaningful example/considerations are required
+for this section is it is at all needed]
+
+In addition to user preferences,
+the choice between actions and ASFs can be defined
+by how context-sensitive the input is, i.e.
+how much context information is needed to build the parse value.
+
+As an arguably trivial example, if the parse value must be produced
+by computing an arithmetic expression, actions become the obvious choice.
+
+As a less trivial example, in the case of syntax-driven translation,
+where the value of each symbol is context-independent,
+actions or even events provide a better choice.
+
+On the other hand, nested macro expansion
+can arguably be done more convenient with the full context at hand
+so the full AST (ASF) is required.
+
+## Events <a id="events"></a>
+
+Parse events are defined using [`completed`](#completed) and [`predicted`](#predicted) adverbs.
+
+[todo: provide getting started info/tutorial on parse events].
 
 ## Locale support
 
@@ -244,7 +477,7 @@ If the produce-operator is `::=`, then the grammar is `g1`.  The tilde `~` can b
 
 A structural grammar will often contain lexical elements, such as strings and character classes, and these will go into its linked lexical grammar.  The start rule specifies its lexical grammar with an adverb (what?).  In a lexical grammar the lexemes are indicated with the `lexeme` adverb -- if a rule has a lexeme adverb, its LHS is a lexeme.
 
-If a grammar specified lexemes, it is a lexical grammar.  If a grammar specified a linked lexical grammar, it is a structural grammar.  `l0` must always be a lexical grammar.  `g1` must always be a structural grammar and is linked by default to `l0`.  It is a fatal error if a grammar has no indication whether it is structural or lexical, but this indication may be a default.  Enforcement of these restrictions is done by the lower layer (KLOL).
+If a grammar specifies lexemes, it is a lexical grammar.  If a grammar specifies a linked lexical grammar, it is a structural grammar.  `l0` must always be a lexical grammar.  `g1` must always be a structural grammar and is linked by default to `l0`.  It is a fatal error if a grammar has no indication whether it is structural or lexical, but this indication may be a default.  Enforcement of these restrictions is done by the lower layer (KLOL).
 
 ## Example grammars
 
@@ -254,12 +487,12 @@ If a grammar specified lexemes, it is a lexical grammar.  If a grammar specified
 Script ::= Expression+ % ','
 Expression ::=
   Number
-  | '(' Expression ')'
- || Expression '**' Expression, action = function (...) return arg[1] ^ arg[2] end
- || Expression '*' Expression, action = function (...) return arg[1] * arg[2] end
-  | Expression '/' Expression, action = function (...) return arg[1] / arg[2] end
- || Expression '+' Expression, action = function (...) return arg[1] + arg[2] end
-  | Expression '-' Expression, action = function (...) return arg[1] - arg[2] end
+  | '(' Expression ')', assoc = group, action = do_parens
+ || Expression '**' Expression, assoc = right, action = function (e1, e2) return e1 ^ e2 end
+ || Expression '*' Expression, action = function (e1, e2) return e1 * e2 end
+  | Expression '/' Expression, action = function (e1, e2) return e1 / e2 end
+ || Expression '+' Expression, action = function (e1, e2) return e1 + e2 end
+  | Expression '-' Expression, action = function (e1, e2) return e1 - e2 end
  Number ~ [0-9]+
 ```
 
