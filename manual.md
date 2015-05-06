@@ -1,124 +1,133 @@
 ﻿# The LUIF
 
-Warning: this is a working draft.
-
-## Overview
-
-This document describes the LUIF (LUa InterFace),
+This document (which is currently a work-in-progress for further discussion) describes
+the **LUIF** (**LU**a **I**nter**F**ace),
 the interface language of
-the [Kollos project](https://github.com/jeffreykegler/kollos/).
+the [Kollos project](https://github.com/jeffreykegler/kollos/#about-kollos).
 
-The LUIF is Lua, extended with [BNF](http://en.wikipedia.org/wiki/Backus%E2%80%93Naur_Form) statements.
+The LUIF is [Lua](http://www.lua.org/), extended with
+[BNF](http://en.wikipedia.org/wiki/Backus%E2%80%93Naur_Form) statements
+[as specified below](#bnf_statement).
 
-[todo: consider rearranging the sections after more content is added
-to follow the Lua manual bottom-up pattern of introducing individual constructs with grammar snippets first and presenting the full syntax in the final section. ]
+## Table of Contents
 
-## BNF statement
+[BNF Statement](#bnf_statement)<br/>
+- [Structural and Lexical Rules](#structural_and_lexical_rules)<br/>
+- [Grammars](#grammars)<br/>
+- [Precedenced Rules](#precedenced_rules)<br/>
+- [Sequences](#sequences)<br/>
+- [Grouping and Hiding Symbols](#grouping_and_hiding_symbols)<br/>
+- [Symbol Names](#symbol_names)<br/>
+- [Literals](#literals)<br/>
+- [Character Classes](#character_classes)<br/>
+- [Comments](#comments)<br/>
+- [Adverbs](#adverbs)<br/>
+  - [`action`](#action)<br/>
+  - [`completed`](#completed)<br/>
+  - [`predicted`](#predicted)<br/>
+  - [`assoc`](#assoc)
 
-There is only one BNF statement, combining precedence, sequences, and alternation.
+[Semantics](#semantics)<br/>
+- [Defining Semantics with `action` adverb](#defining_semantics_with_action_adverb)<br/>
+- [Context Accessors](#context_accessors)<br/>
 
-LUIF extends the Lua syntax by adding `bnf` alternative to `stat` rule of the [Lua grammar](http://www.lua.org/manual/5.1/manual.html#8) and introducing the new rules. The general syntax for a BNF statement is as follows (`stat`, `block`, `funcname`, `funcbody`, `var`, `Name`, and `String` symbols are as defined by the Lua grammar):
+[Events](#events)<br/>
+[Post-Processing](#post_processing)<br/>
+[Programmatic Grammar Construction](#programmatic_grammar_construction)<br/>
+[Locale Support](#locale_support)<br/>
+[The Complete Syntax of BNF Statement](#complete_syntax_of_bnf_statement)<br/>
+[Example Grammars](#example_grammars)<br/>
+- [Calculator](#calculator)<br/>
+- [JSON](#json)<br/>
 
-Note: this describes LUIF structural and lexical grammars 'used in the default way' as defined in [Grammars](#grammars) section below. The first rule will act as the start rule.
+<a id="bnf_statement"></a>
+## BNF Statement
 
-[todo: make sure it conforms to other sections]
+LUIF extends the Lua syntax by adding `bnf` alternative to `stat` rule of the [Lua grammar](http://www.lua.org/manual/5.1/manual.html#8) and introducing the new rules for BNF statements. There is only one BNF statement, combining [precedence](#precedenced_rules),
+[sequences](#sequences), and alternation as specified below.
+
+A BNF statement specifies a rule, which consists of, in order:
+
+- A left hand side (LHS), which will be a [symbol](#symbol_names).
+
+- A produce-operator (`::=` or `~`).
+
+- A right-hand side (RHS), which contains one or more RHS alternatives. A RHS alternative is a series of RHS primaries, where a RHS primary may be
+a [symbol name](#symbol_names), a [character class](#character_classes), a [literal](#literals), a [sequence](#sequences) or another, [grouped or hidden](#grouping_and_hiding_symbols), RHS alternative.
+
+<a id="structural_and_lexical_rules"></a>
+### Structural and Lexical Rules
+
+A rule specified by a BNF statement can be either structural or lexical.
+Structural or lexical rules are declared by using `::=` and `~` produce-operators.
+Lexical rules form a [grammar](#grammars) of their own called, unsurprisingly, a "lexical grammar".
+
+Using the LHS of a lexical rule on the RHS of a structural rule makes a _lexeme_.
+A _lexeme_ is a sequence of characters in the input matched by a rule in a lexical grammar.
+A lexeme and the LHS of the lexical rule it matches form a _token_. The LHS of the lexical rule is called a _token name_ and the lexeme forms a _token value_. The Marpa recognizer reads the token names as its input symbols (_lexeme_ and _token_ as defined in the [Purple Book](http://en.wikipedia.org/wiki/Compilers%3a_Principles,_Techniques,_and_Tools#Second_edition)).
+
+Lexemes can also be defined explicitely by modifying an RHS alternative with `action = lexeme` adverbial.
+
+<a id="grammars"></a>
+## Grammars
+
+[todo: rewrite according to the above and the discussion about grammar start statement at https://github.com/rns/kollos-luif-doc/issues/10]
+
+BNF statements are grouped into one or more grammars.  There are two kinds of LUIF grammars: [structural and lexical](#structural_and_lexical_rules).
+
+A grammar is lexical if one or more of its rules have the special `lexeme` action.
+
+The grammar is indicated by the produce-operator of the BNF. Its general form is `:grammar:=`, where `grammar` is the name of a grammar.  `grammar` must not contain colons.  Initially, the [post-processing](#post_processing) will not support anything but `l0` and `g1` used in the default way, like this:
+
+```lua
+-- structural grammar
+a ::= b c       -- the first rule is the start rule
+                -- using the LHS (b c) of a lexical rule
+                -- on the RHS of a structural rule makes a lexeme
+a ::= w
+aa ::= a a
+
+-- lexical grammar
+w ~ x y z
+b ~ 'b' x
+c ~ 'c' y
+
+x ~ 'x'
+y ~ 'y'
+z ~ [xyz]
 
 ```
-stat ::= bnf
 
-bnf ::= lhs produce_op rhs  -- to make references to LHS/RHS easier to understand
+If the produce-operator is `::=`, then the grammar is `g1`.  The tilde `~` can be a produce-operator, in which case it is equivalent to `:l0:=`.
 
-lhs ::= symbol_name
+A structural grammar will often contain lexical elements, such as strings and character classes, and these will go into its linked lexical grammar.  The start rule specifies its lexical grammar with an adverb (what?).  In a lexical grammar the lexemes are indicated with the `lexeme` adverb -- if a rule has a lexeme adverb, its LHS is a lexeme.
 
-produce_op ::= '::=' |
-               '~'
+If a grammar specifies lexemes, it is a lexical grammar.  If a grammar specifies a linked lexical grammar, it is a structural grammar.  `l0` must always be a lexical grammar.  `g1` must always be a structural grammar and is linked by default to `l0`.  It is a fatal error if a grammar has no indication whether it is structural or lexical, but this indication may be a default.  Enforcement of these restrictions is done by the lower layer (KLOL).
 
-rhs ::= precedenced_alternative { '||' precedenced_alternative }
+<a id="precedenced_rules"></a>
+### Precedenced Rules
 
-precedenced_alternative ::= alternative { '|' alternative }
+A precedenced rule contains a series of one or more RHS alternatives, separated by either the alternation operator (`|`) or the loosen operators (`||`). In a typical grammar, most rules are precedenced rules, but they are often trivially precedenced, consisting of one or several RHS alternatives with equal precedence. For brevity, RHS alternatives are often called alternatives.
 
-alternative ::= rhslist { ',' adverb }
+An alternative may be followed by a list of [adverbs](#adverbs).
 
-adverb ::= action |
-           completed |
-           predicted |
-           assoc
+The RHS alternatives in a precedenced right hand side proceed from tightest (highest) priority to loosest. The double "or" symbol (`||`) is the "loosen" operator -- the alternatives after it have a looser (lower) priority than the alternatives before it. The single "or" symbol (`|`) is the ordinary "alternative" operator -- alternatives on each side of it have the same priority. Associativity is specified using the [`assoc`](#assoc) adverb, as described below.
 
--- values other than function(...) -- https://github.com/rns/kollos-luif-doc/issues/12
--- context in action functions -- https://github.com/rns/kollos-luif-doc/issues/11
-action ::= 'action' '=' functionexp
+For a usage example of precedenced rules, see the [Calculator](#calculator) grammar below.
 
-completed ::= 'completed' '=' functionexp
-
-predicted ::= 'predicted' '=' functionexp
-
-functionexp ::= 'function' funcname funcbody |
-                funcname
-
-assoc ::= 'assoc' '=' assocexp
-
-assocexp ::= 'left' |
-             'right' |
-             'group'
-
-rhslist ::= { rh_atom }       -- can be empty, like Lua chunk
-
-rh_atom ::= var |             -- Lua variable, for programmatic grammar construction
-            separated_sequence |
-            symbol_name |
-            literal |
-            charclass |
-            '(' alternative ')' |
-            '[' alternative ']'
-
-separated_sequence ::= sequence  |
-                       sequence '%'  separator | -- proper separation
-                       sequence '%%' separator
-
--- more complex separators -- http://irclog.perlgeek.de/marpa/2015-05-03#i_10538440
-separator ::= symbol_name
-
-sequence ::= symbol_name '+' |
-             symbol_name '*' |
-             symbol_name '?' |
-             symbol_name '*' Number '..' Number |
-             symbol_name '*' Number '..' '*'
-
-symbol_name :: Name
-
-literal ::= String    -- long strings not allowed
-
--- a Lua pattern as per http://www.lua.org/manual/5.1/manual.html#5.4.1
--- or a regex character class
-charclass ::= String
-
-```
-
-[todo: implementation detail: Lua patterns can be much slower than regexes, so we can
-use lua patterns as they are or
-translate them to regexes for speed
-or make this an option ]
-
-[todo: nested delimiters as sequence separators,
-like [`%bxy`](http://www.lua.org/pil/20.2.html), but with nesting support
-per comment to https://github.com/rns/kollos-luif-doc/issues/17]
-
+<a id="sequences"></a>
 ### Sequences
 
 Sequences are expressions on the RHS of a BNF rule alternative
 which imply the repetition of a symbol,
-or a parenthesized series of symbols. The general syntax for sequences is
-
-[todo: add sequence snippet from the LUIF grammar ]
-```
-```
+or a parenthesized series of symbols.
 
 The item to be repeated (the repetend)
 can be either a single symbol,
 or a sequence of symbols grouped by
 parentheses or square brackets,
 as described above.
-A repetiton consists of
+A repetition consists of
 
 + A repetend, followed by
 + An optional punctuation specifier.
@@ -136,7 +145,7 @@ A repetition specifier is one of
 A punctuation specifier is one of
 ```
     % <sep>     -- use <sep> as a proper separator
-    %% <sep>     -- use <sep> as liberal separator
+    %% <sep>    -- use <sep> as a liberal separator
     %- <sep>    -- proper separation, same as %
     %$ <sep>    -- use <sep> as a terminator
 ```
@@ -186,7 +195,8 @@ An application which really wants to specify rules involving nullable repetition
 can specify them directly in BNF,
 and these will make the programmer's intent clear.
 
-### Grouping and hidden symbols
+<a id="grouping_and_hiding_symbols"></a>
+### Grouping and Hiding Symbols
 
 To group a series of RHS symbols use parentheses:
 
@@ -209,6 +219,11 @@ In other words,
 there is no way to "unhide" a symbol that is inside
 square brackets.
 
+A grouped or hidden series of RHS symbols can be followed by
+a quantifier (`?`, `*` or `+`)
+to define zero or one, zero or more, or one or more repetitions of such series.
+
+<a id="symbol_names"></a>
 ### Symbol names
 
 A LUIF symbol name is any valid Lua name.
@@ -218,68 +233,77 @@ the [SLIF](https://metacpan.org/pod/distribution/Marpa-R2/pod/Scanless/DSL.pod#S
 will allow whitespace
 in names.
 
+<a id="literals"></a>
 ### Literals
 
-LUIF literals are Lua literal strings as defined in [Lexical Conventions](http://www.lua.org/manual/5.1/manual.html#2.1) section of the Lua 5.1 Reference Manual.
+LUIF literals are Lua _literal strings_ as defined in [Lexical Conventions](http://www.lua.org/manual/5.1/manual.html#2.1) section of the Lua 5.1 Reference Manual except that LUIF literals cannot be enclosed in long brackets.
 
+<a id="character_classes"></a>
 ### Character classes
 
-[ Character classes are *not* patterns or regexes -- they are
-the portion of the regex/pattern syntax that describes a
-*single* character.  For example `[abc]` and not `a*` or even
-`abc`. ]
+A character class is a string, which must contain
+a valid [Lua character class](http://www.lua.org/manual/5.1/manual.html#5.4.1) as defined in the Lua reference manual.
+Strings can be defined with character classes using sequence rules.
 
-[todo: string containing a Lua pattern?  I'd like to restrict the
-charclasses to those allowed by Lua patterns. ]
-
-[todo: string containing a PCRE regex? rename to Regexes then]
-
+<a id="comments"></a>
 ### Comments
 
 LUIF comments are Lua comments as defined at the end of [Lexical Conventions](http://www.lua.org/manual/5.1/manual.html#2.1) section in the Lua 5.1 Reference Manual.
 
+<a id="adverbs"></a>
 ### Adverbs
 
-#### `action` <a id="action"></a>
+A LUIF rule can be modified by one or more adverbs.
+Adverbs are `name = value` pairs separated with commas.
+A comma is also used to separate an adverb from the RHS alternative it modifies.
 
-The `action` adverb defines the semantics of its RHS alternative.
-Its values are specified in [Semantics](#semantic_action) section below.
+<a id="action"></a>
+#### `action`
 
-#### `completed` <a id="completed"></a>
+The `action` adverb defines the semantics of the RHS alternative it modifies.
+Its value is specified in [Semantics](#semantics) section below.
+
+The `action` adverb can also have a special `lexeme` value [descrived above](#structural_and_lexical_rules).
+
+<a id="completed"></a>
+#### `completed`
 
 The `completed` adverb defines
 the Lua function to be called when the RHS alternative is completed during the parse.
-Its values are the same as those of the `action` adverb.
+Its value is the same as that of the `action` adverb.
 
 For more details on parse events, see [Events](#events) section.
 
-#### `predicted` <a id="predicted"></a>
+<a id="predicted"></a>
+#### `predicted`
 
 The `predicted` adverb defines
 the Lua function to be called when the RHS alternative is predicted during the parse.
-Its values are the same as those of the `action` adverb.
+Its value is the same as that of the `action` adverb.
 
 For more details on parse events, see [Events](#events) section.
 
+<a id="assoc"></a>
 #### `assoc`
 
-The `assoc` adverb defines associativity of a precedenced rule.
+The `assoc` adverb defines associativity of a [precedenced rule](#precedenced_rules).
 Its value can be `left`, `right`, or `group`.
 The function of this adverb is as defined in the [SLIF](https://metacpan.org/pod/distribution/Marpa-R2/pod/Scanless/DSL.pod#assoc).
 
-## Semantics <a id="semantic_action"></a>
+For a usage example, see the [Calculator](#calculator) grammar below.
 
-The semantics of a BNF statement in the LUIF can be defined using either [`action` adverb](#semantic_action) of its RHS alternative or the [Abstract-Syntax Forest (ASF)](#semantics_with_ast_asf) functions of the LUIF.
+<a id="semantics"></a>
+## Semantics
 
-### Defining Semantics with `action` <a id="semantic_action"></a> adverb
+The semantics of a BNF statement in the LUIF can be defined
+by modifying its RHS alternatives
+with [`action`](#defining_semantics_with_action_adverb) adverb.
 
-The value of the `action` adverb can be a Lua function as defined in [Function Definitions](http://www.lua.org/manual/5.1/manual.html#2.5.9) section of the Lua 5.1 Reference Manual or the name of such function.
+<a id="defining_semantics_with_action_adverb"></a>
+### Defining Semantics with `action` adverb
 
-An action function can be
-a [bare function](#bare_function),
-a [namespaced function](#namespaced_function), or
-a [method](#method_function).
-This allows defining semantics in a set of functions, a namespace (Lua package) or an object.
+The value of an `action` adverb can be a body of a Lua function (`funcbody`) as defined in [Function Definitions](http://www.lua.org/manual/5.1/manual.html#2.5.9) section of the Lua 5.1 Reference Manual or the name of such function, which must be a bare name (not a namespaced or a method function's name).
+
 The action functions will be called in the context where their respective BNF statements are defined. Their return values will become the values of the LHS symbols corresponding to the RHS alternatives modified by the `action` adverb.
 
 The match context information, such as
@@ -288,56 +312,23 @@ will be provided by [context accessors](#context_accessors) in `luif.context` na
 
 If the semantics of a BNF statement is defined in a separate Lua file, LUIF functionality must be imported with Lua's [`require`] (http://www.lua.org/manual/5.1/manual.html#pdf-require) function.
 
-#### Bare Function Actions <a id="bare_function"></a>
-
-The syntax for a bare function action is
+The syntax for a semantic action function is
 
 ```lua
-action = function f (params) body end
+action = function (params) body end
 ```
 
 It will be called as `f (params)`
 with `params` set to
 the values defined by the semantics of the matched RHS alternative's symbols.
 
-#### Namespaced Function Actions <a id="namespaced_function"></a>
+[parameter list is under discussion at https://github.com/rns/kollos-luif-doc/issues/26]
 
-The syntax for a namespaced function action is
+<a id="context_accessors"></a>
+#### Context Accessors
 
-```lua
-action = function t.a.b.c.f (params) body end
-```
-
-It will be called as `t.a.b.c.f (params)`
-with `params` set to
-the values defined by the semantics of the matched RHS alternative's symbols.
-
-More details on packages in Lua can be found in [Packages](http://www.lua.org/pil/15.html) section of _Programming in Lua_ book.
-
-#### Method Actions <a id="method_function"></a>
-
-The syntax for a method action is
-
-```lua
-action = function t.a.b.c:f (params) body end
-```
-
-or
-
-```lua
-action = function t.a.b.c.f (self, params) body end
-```
-
-It will be called as `t.a.b.c:f (params)`
-with `params` set to
-the values defined by the semantics of the matched RHS alternative's symbols.
-
-More details on objects and methods in Lua can be found in [Object-Oriented Programming](http://www.lua.org/pil/16.html) section of _Programming in Lua_ book.
-
-#### Context Accessors <a id="context_accessors"></a>
-
-Context accessors live in the `luif.context` name space.
-They can be called from semantic actions to get matched rule and locations data.
+Context accessors live in the `luif.context` namespace.
+They can be called from semantic actions to get matched rule and location data.
 To import them into a separate file, use Lua's [`require`](http://www.lua.org/manual/5.1/manual.html#pdf-require) function, i.e.
 
 ```lua
@@ -348,100 +339,78 @@ The context accessors are:
 
 ##### `lhs_id = luif.context.lhs()`
 
-returns the integer ID of the symbol which is on the LHS of the BNF rule matched in the parse value or completed/predicted during the parse.
+returns the integer ID of the symbol which is on the LHS of the BNF rule
+whose semantic action or completed/predicted event handler is being called during the parse.
 
 ##### `rule_id = luif.context.rule()`
 
-returns the integer ID of the BNF rule matched in the parse value or completed/predicted during the parse.
+returns the integer ID of the BNF rule
+whose semantic action or completed/predicted event handler is being called during the parse.
 
 ##### `alt_no = luif.context.alternative()`
 
-returns the number of the the BNF rule's RHS alternative matched in the parse value or completed/predicted during the parse.
+returns the number of the BNF rule's RHS alternative
+whose semantic action or completed/predicted event handler is being called during the parse.
 
 ##### `prec = luif.context.precedence()`
 
-returns numeric precedence of the matched/completed/predicted alternative
-relative to other alternatives or nil if no precedence is defined for the alternative.
+returns numeric precedence of
+the alternative, whose semantic action or completed/predicted event handler is being called during the parse, relative to other alternatives or nil if no precedence is defined for the alternative.
 
 ##### `pos, len = luif.context.span()`
 
 returns position and length of the input section corresponding to
-the BNF rule matched in the parse value or
-completed/predicted during the parse.
+the BNF rule whose semantic action or completed/predicted event handler is being called during the parse.
 
 ##### `string = luif.context.literal()`
 
 returns the section of the input corresponding to
-the BNF rule matched in the parse value or
-completed/predicted during the parse.
+the BNF rule whose semantic action or completed/predicted event handler is being called during the parse.
 It is defined by
 the input span returned by the `luif.context.span()` function above.
 
 ##### `pos = luif.context.pos()`
 
 returns the position in the input, which starts the span corresponding to
-the BNF rule matched in the parse value or
-completed/predicted during the parse.
+the BNF rule whose semantic action or completed/predicted event handler is being called during the parse.
 
 ##### `len = luif.context.length()`
 
 returns the length of the input span corresponding to
-the BNF rule matched in the parse value or
-completed/predicted during the parse.
+the BNF rule whose semantic action or completed/predicted event handler is being called during the parse.
 
-### Defining Semantics with AST/ASF <a id="semantics_with_ast_asf"></a>
-
-Marpa is designed to support ambiguity out-of-the-box,
-hence the LUIF semantics aims for the general case, where you have several parse values (ambiguous parse) and treats single parse values (unambiguous parse) as its specialization.
-The former case is handled with the [Abstract Syntax Forest (ASF) interface](#asf_traversal), while for the latter the application can simply [walk the AST](#ast_walking).
-
-The application can use `luif.value.ambiguous()` function to determine whether the parse is ambiguous. [todo: specify `luif.value.ambiguous()`]
-
-#### Ambiguous Parse -- Traversing the ASF  <a id="asf_traversal"></a>
-
-If the parse is ambiguous,
-LUIF walks the ASF calling the traverser function for its nodes.
-The traverser can call functions in `luif.asf` interface to enumerate and/or prune parse alternatives. This is done with `luif.asf.traverse(traverser)` function.
-
-[todo: more details/examples on ASF traversal]
-
-##### Enumerating Parse Alternatives
-
-##### Pruning the ASF
-
-#### Unambiguous Parse -- Walking the AST <a id="ast_walking"></a>
-
-If the parse is unambiguous, the ASF becomes the AST that makes the application's job much simpler. LUIF will build the AST and will call the visitor function for its nodes in the given order. The application can use [context accessors](#context_accessors) to get the node data, distill the AST, and produce the parse value. This is done by calling `luif.ast.walk(order, visitor)` function.
-
-[todo: more details/examples on AST walking]
-
-### Actions and ASF's: How to Choose
-
-[todo: more meaningful example/considerations are required
-for this section is it is at all needed]
-
-In addition to user preferences,
-the choice between actions and ASFs can be defined
-by how context-sensitive the input is, i.e.
-how much context information is needed to build the parse value.
-
-As an arguably trivial example, if the parse value must be produced
-by computing an arithmetic expression, actions become the obvious choice.
-
-As a less trivial example, in the case of syntax-driven translation,
-where the value of each symbol is context-independent,
-actions or even events provide a better choice.
-
-On the other hand, nested macro expansion
-can arguably be done more convenient with the full context at hand
-so the full AST (ASF) is required.
-
-## Events <a id="events"></a>
+<a id="events"></a>
+## Events
 
 Parse events are defined using [`completed`](#completed) and [`predicted`](#predicted) adverbs.
 
 [todo: provide getting started info/tutorial on parse events].
 
+[todo: example/prototyping based on https://gist.github.com/rns/ba250ed6a5ed1c82ce7b]
+
+<a id="post_processing"></a>
+## Post-processing
+
+LUIF grammars are transformed into KIR (Kollos Intermediate Runtime) tables using Direct-to-Lua (D2L) calls and format specified in a [separate document](d2l/spec.md).
+
+[todo: rewrite to the end of the section]
+
+The output will be a table, with one key for each grammar name.  Keys *must* be strings.  The value of each grammar key will be a table, with entries for external and internal symbols and rules.  Details of the format will be specified later.
+
+The KIR table will be interpreted by the lower layer (KLOL).  Initially post-processing will take a very restricted form in the LUIF structural and lexical grammars.
+
+The post-processing will expect a lexical grammar named `l0` and a structural grammar named `g1`, and will check (in the same way that Marpa::R2 currently does) to ensure they are compatible.
+
+<a id="programmatic_grammar_construction"></a>
+## Programmatic Grammar Construction (PGC)
+
+Direct-to-Lua (D2L) calls can be used to build LUIF grammars programmatically.
+The details are specified in a [separate document](d2l/spec.md).
+
+At the moment, LUIF statements cannot be affected by Lua statements directly,
+but this can change in future.
+
+<a id="locale_support"></a>
 ## Locale support
 
 Full support is only assured for the "C" locale -- support for other locales may be limited, inconsistent, or removed in the future.
@@ -450,43 +419,102 @@ Lua's `os.setlocale()`, when used in the LUIF context for anything but the "C" l
 
 [todo: update the tentative language above as Kollos project progresses]
 
-## Post-processing
+<a id="complete_syntax_of_bnf_statement"></a>
+## The Complete Syntax of BNF Statement
 
-The output of the KHIL will be a table, with one key for each grammar name.  Keys *must* be strings.  The value of each grammar key will be a table, with entries for external and internal symbols and rules.  Details of the format will be specified later.
+The general syntax for a BNF statement is as follows (`stat`, `block`, `funcbody`, `Name`, and `String` symbols are as defined by the Lua grammar):
 
-This table will be interpreted by the lower layer (KLOL).  Initially post-processing will take a very restricted form in the LUIF grammars.   There are two kinds of Libmarpa grammars: structural and lexical grammar.  A grammar is lexical if one or more of its rules have the special `lexeme` action.  The post-processing will expect a lexical grammar named `l0` and a structural grammar named `g1`, and will check (in the same way that Marpa::R2 currently does) to ensure they are compatible.
-
-## Grammars <a id="grammars"></a>
-
-BNF statements are grouped into one or more grammars.  The grammar is indicated by the produce-operator of the BNF. Its general form is `:grammar:=`, where `grammar` is the name of a grammar.  `grammar` must not contain colons.  Initially, the post-processing will not support anything but `l0` and `g1` used in the default way, like this:
-
-```lua
--- structural grammar
-a ::= b c       -- the first rule is the start rule
-                -- using the LHS (b c) of a lexical rule
-                -- on the RHS of a structural rule makes a lexeme
-a ::= w
-aa ::= a a
-
--- lexical grammar
-w ~ x y z
-b ~ 'b' x
-c ~ 'c' y
-
-x ~ 'x'
-y ~ 'y'
-z ~ [xyz]
+Note: this describes LUIF structural and lexical grammars 'used in the default way' as defined in [Grammars](#grammars) section above. The first rule will act as the start rule.
 
 ```
+stat ::= bnf
 
-If the produce-operator is `::=`, then the grammar is `g1`.  The tilde `~` can be a produce-operator, in which case it is equivalent to `:l0:=`.
+bnf ::= lhs produce_op rhs  -- to make references to LHS/RHS easier to understand
 
-A structural grammar will often contain lexical elements, such as strings and character classes, and these will go into its linked lexical grammar.  The start rule specifies its lexical grammar with an adverb (what?).  In a lexical grammar the lexemes are indicated with the `lexeme` adverb -- if a rule has a lexeme adverb, its LHS is a lexeme.
+lhs ::= symbol_name
 
-If a grammar specifies lexemes, it is a lexical grammar.  If a grammar specifies a linked lexical grammar, it is a structural grammar.  `l0` must always be a lexical grammar.  `g1` must always be a structural grammar and is linked by default to `l0`.  It is a fatal error if a grammar has no indication whether it is structural or lexical, but this indication may be a default.  Enforcement of these restrictions is done by the lower layer (KLOL).
+produce_op ::= '::=' |
+               '~'
 
+rhs ::= precedenced_alternative { '||' precedenced_alternative }
+
+precedenced_alternative ::= alternative { '|' alternative }
+
+alternative ::= rhs_primaries { ',' adverb }
+
+adverb ::= action |
+           completed |
+           predicted |
+           assoc
+
+-- values other than function(...) -- https://github.com/rns/kollos-luif-doc/issues/12
+-- context in action functions -- https://github.com/rns/kollos-luif-doc/issues/11
+action ::= 'action' '=' functionexp
+
+completed ::= 'completed' '=' functionexp
+
+predicted ::= 'predicted' '=' functionexp
+
+functionexp ::= 'function' funcbody |
+                Name
+
+assoc ::= 'assoc' '=' assocexp
+
+assocexp ::= 'left' |
+             'right' |
+             'group'
+
+rhs_primaries ::= { rhs_primary }       -- can be empty, like Lua chunk
+
+rhs_primary ::= separated_sequence |
+                symbol_name |
+                literal |
+                charclass |
+                grouped_alternative |
+                hidden_alternative
+
+separated_sequence ::= sequence  |
+                       sequence '%'  separator | -- proper separation
+                       sequence '%%' separator |
+                       sequence '%-' separator |
+                       sequence '%$' separator
+
+grouped_alternative ::= '(' alternative ')'
+
+hidden_alternative ::= '[' alternative ']'
+
+sequence ::= sequence_item '+' |
+             sequence_item '*' |
+             sequence_item '?' |
+             sequence_item '**' Number '..' Number |
+             sequence_item '**' Number '..' '*'
+
+sequence_item ::= symbol_name |
+                  grouped_alternative |
+                  hidden_alternative
+
+separator ::= symbol_name |
+              literal |
+              character_class
+
+symbol_name :: Name
+
+literal ::= String    -- sans the long strings
+
+character_class ::= String
+
+```
+[todo: `character_class` as sequence separator is [under discussion](https://github.com/rns/kollos-luif-doc/issues/17#issuecomment-98474355)]
+
+[todo: implementation detail: Lua patterns can be much slower than regexes, so we can
+use lua patterns as they are or
+translate them to regexes for speed
+or make this an option ]
+
+<a id="example_grammars"></a>
 ## Example grammars
 
+<a id="calculator"></a>
 ### Calculator
 
 ```
@@ -502,6 +530,7 @@ Expression ::=
  Number ~ [0-9]+
 ```
 
+<a id="json"></a>
 ### JSON
 
 ```
