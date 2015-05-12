@@ -176,15 +176,28 @@ is keyed by symbol name.
 In its property tables,
 the keys are
 
-* `terminal` -- Optional.
-  Present and true if and only
-  if the internal symbol
-  is a terminal.
-
 * `start` -- Optional.
   Present and true if and only
   if the internal symbol
-  is the start symbol.
+  is the start symbol
+  of a structural grammar.
+
+* `lexeme` -- Optional.
+  Present and true if and only
+  if the internal symbol
+  is a lexeme symbol
+  in a lexical grammar.
+
+* `terminal` -- Optional.
+  Present and true if and only
+  if the internal symbol
+  is a terminal of a
+  structural grammar.
+
+* `charclass` -- Optional.
+  If present, its value is a string
+  containing a Lua character class.
+  True only when the grammar is lexical.
 
 * `brick` -- Optional.
   Present and true if and only
